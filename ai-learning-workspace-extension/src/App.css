@@ -57,9 +57,41 @@ body {
   margin-bottom: 10px;
 }
 
+.chat-input-container {
+  border-top: 1px solid #ddd;
+  background: #fff;
+}
+
+.chat-quick-actions {
+  display: flex;
+  gap: 8px;
+  padding: 8px 10px 0 10px;
+}
+
+.quick-action-btn {
+  background: #f3f4f6;
+  border: 1px solid #d1d5db;
+  border-radius: 14px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  color: #374151;
+  transition: all 0.15s ease;
+}
+
+.quick-action-btn:hover:not(:disabled) {
+  background: #e5e7eb;
+  border-color: #9ca3af;
+}
+
+.quick-action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .chat-input {
   display: flex;
-  border-top: 1px solid #ddd;
   padding: 8px;
 }
 
@@ -261,6 +293,10 @@ body {
   margin-right: auto;
   background: #f3f4f6;
   text-align: left;
+}
+
+.explanation-message {
+  border-left: 3px solid #3b82f6;
 }
 
 .message strong {

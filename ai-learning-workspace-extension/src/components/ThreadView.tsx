@@ -2,11 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
-type Message = {
-  sender: string;
-  text: string;
-  timestamp: string;
-};
+import type { Message } from "../types/thread";
 
 interface ThreadViewProps {
   title: string;
@@ -54,12 +50,16 @@ useEffect(() => {
           key={index}
           className={
             msg.sender === "AI"
-              ? "message ai-message"
+              ? msg.type === "explanation"
+                ? "message ai-message explanation-message"
+                : "message ai-message"
               : "message user-message"
           }
         >
           <div>
-  <strong>{msg.sender}: </strong>
+  <strong>
+    {msg.type === "explanation" ? "💡 AI Explanation: " : `${msg.sender}: `}
+  </strong>
 
   {msg.sender === "AI" ? (
     <ReactMarkdown>

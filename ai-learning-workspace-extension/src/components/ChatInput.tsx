@@ -4,11 +4,13 @@ import { useState } from "react";
 
 interface ChatInputProps {
   onSendMessage: (message: string) => void;
+  onExplain?: () => void;
   isTyping: boolean;
 }
 
 function ChatInput({
   onSendMessage,
+  onExplain,
   isTyping,
 }: ChatInputProps) {
   const [input, setInput] = useState("");
@@ -21,24 +23,38 @@ function ChatInput({
   };
 
   return (
-    <div className="chat-input">
-      <input
-  type="text"
-  placeholder="Ask a doubt..."
-  value={input}
-  onChange={(e) => setInput(e.target.value)}
-  onKeyDown={(e) => {
-    if (e.key === "Enter") {
-      handleSend();
-    }
-  }}
-/>
-      <button
-  onClick={handleSend}
-  disabled={isTyping}
->
-  Send
-</button>
+    <div className="chat-input-container">
+      {onExplain && (
+        <div className="chat-quick-actions">
+          <button
+            type="button"
+            className="quick-action-btn"
+            onClick={onExplain}
+            disabled={isTyping}
+          >
+            💡 Explain
+          </button>
+        </div>
+      )}
+      <div className="chat-input">
+        <input
+          type="text"
+          placeholder="Ask a doubt..."
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              handleSend();
+            }
+          }}
+        />
+        <button
+          onClick={handleSend}
+          disabled={isTyping}
+        >
+          Send
+        </button>
+      </div>
     </div>
   );
 }

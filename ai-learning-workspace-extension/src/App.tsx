@@ -463,6 +463,91 @@ try {
   setIsTyping(false);
 }
 };
+
+const explainCurrentThread = async () => {
+  if (!selectedThreadId || isTyping) return;
+
+  const targetThreadId = selectedThreadId;
+  const currentThread = threads.find((t) => t.id === targetThreadId);
+  if (!currentThread) return;
+
+  setIsTyping(true);
+
+  const contextText = currentThread.context ? `Context:\n${currentThread.context}\n\n` : "";
+  const historyText =
+    currentThread.messages.length > 0
+      ? `Recent Discussion:\n${currentThread.messages.map((m) => `${m.sender}: ${m.text}`).join("\n")}\n\n`
+      : "";
+
+  const explanationPrompt = `
+Topic / Question:
+${currentThread.title}
+
+${contextText}${historyText}TASK:
+Explain this concept clearly and concisely for a student.
+Please structure your explanation with:
+1. Plain-English intuition (what is it conceptually?)
+2. A concrete analogy or real-world/code example
+3. Key takeaway / why it matters
+
+Focus directly on the selected topic/doubt and its context rather than generating an unrelated general lecture.
+Use clean Markdown formatting.
+`.trim();
+
+  try {
+    const aiReply = await sendToAI(explanationPrompt);
+
+    if (!aiReply) {
+      throw new Error("Empty reply from AI service");
+    }
+
+    setThreads((prevThreads) =>
+      prevThreads.map((thread) => {
+        if (thread.id === targetThreadId) {
+          return {
+            ...thread,
+            updatedAt: new Date().toISOString(),
+            messages: [
+              ...thread.messages,
+              {
+                sender: "AI",
+                text: aiReply,
+                timestamp: new Date().toISOString(),
+                type: "explanation",
+              },
+            ],
+          };
+        }
+        return thread;
+      })
+    );
+  } catch (err) {
+    console.error("explainCurrentThread ERROR:", err);
+
+    setThreads((prevThreads) =>
+      prevThreads.map((thread) => {
+        if (thread.id === targetThreadId) {
+          return {
+            ...thread,
+            updatedAt: new Date().toISOString(),
+            messages: [
+              ...thread.messages,
+              {
+                sender: "AI",
+                text: "⚠️ Failed to get explanation. Please make sure the local server is running on port 5000 and try again.",
+                timestamp: new Date().toISOString(),
+              },
+            ],
+          };
+        }
+        return thread;
+      })
+    );
+  } finally {
+    setIsTyping(false);
+  }
+};
+
 const closeSidebar = () => {
   setSidebarOpen(false);
 
@@ -542,6 +627,7 @@ return (
 
        <ChatInput
   onSendMessage={sendMessage}
+  onExplain={explainCurrentThread}
   isTyping={isTyping}
 />
       </div>
