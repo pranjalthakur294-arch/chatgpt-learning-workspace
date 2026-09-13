@@ -1,6 +1,6 @@
 // src/components/ThreadView.tsx
 
-import { useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Message } from "../types/thread";
 
@@ -18,32 +18,55 @@ function ThreadView({
   sourceUrl,
   messages,
   isTyping,
-}: ThreadViewProps){const messagesEndRef =
-  useRef<HTMLDivElement>(null);
+}: ThreadViewProps) {
+  const [showContext, setShowContext] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
-useEffect(() => {
-  messagesEndRef.current?.scrollIntoView({
-    behavior: "smooth",
-  });
-}, [messages, isTyping]);
-  <div ref={messagesEndRef} />
+  useEffect(() => {
+    setShowContext(false);
+  }, [title, context]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({
+      behavior: "smooth",
+    });
+  }, [messages, isTyping]);
 
   return (
     <div className="thread-view">
       <h2>{title}</h2>
 
-      <p className="thread-context">
-        {context}
-      </p>
-      {sourceUrl && (
-  <a
-    href={sourceUrl}
-    target="_blank"
-    rel="noreferrer"
-  >
-    🔗 Open Original Chat
-  </a>
-)}  
+      {(context || sourceUrl) && (
+        <div className="thread-context-container">
+          <button
+            type="button"
+            className="context-toggle-btn"
+            onClick={() => setShowContext(!showContext)}
+          >
+            <span>{showContext ? "▾" : "▸"}</span>
+            <span>View source context</span>
+          </button>
+
+          {showContext && (
+            <div className="context-panel">
+              {sourceUrl && (
+                <div className="context-source-link">
+                  <a
+                    href={sourceUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    🔗 Open Original Chat
+                  </a>
+                </div>
+              )}
+              {context && (
+                <pre className="context-content">{context.trim()}</pre>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {messages.map((msg, index) => (
         <div
