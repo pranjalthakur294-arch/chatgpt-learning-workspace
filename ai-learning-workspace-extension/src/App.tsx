@@ -278,7 +278,20 @@ const [searchTerm, setSearchTerm] =
   useState<Thread | null>(null);
 const [isTyping, setIsTyping] =
   useState(false);
+const activeRequestsRef = useRef(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+const startAiRequest = () => {
+  activeRequestsRef.current += 1;
+  setIsTyping(true);
+};
+
+const finishAiRequest = () => {
+  activeRequestsRef.current = Math.max(0, activeRequestsRef.current - 1);
+  if (activeRequestsRef.current === 0) {
+    setIsTyping(false);
+  }
+};
 
   useEffect(() => {
     const handleParentMessage = (event: MessageEvent) => {
@@ -369,6 +382,8 @@ const prompt = buildLearningPrompt(
   sourceUrl
 );
 
+startAiRequest();
+
 try {
   console.log("BEFORE sendToAI");
 
@@ -376,11 +391,16 @@ try {
 
   console.log("AFTER sendToAI", aiReply);
 
+  if (!aiReply) {
+    throw new Error("Empty reply from AI service");
+  }
+
   setThreads((prev) =>
     prev.map((thread) =>
       thread.id === threadId
         ? {
             ...thread,
+            updatedAt: new Date().toISOString(),
             messages: [
               ...thread.messages,
               {
@@ -397,6 +417,27 @@ try {
   console.log("AFTER setThreads");
 } catch (err) {
   console.error("sendToAI ERROR:", err);
+
+  setThreads((prev) =>
+    prev.map((thread) =>
+      thread.id === threadId
+        ? {
+            ...thread,
+            updatedAt: new Date().toISOString(),
+            messages: [
+              ...thread.messages,
+              {
+                sender: "AI",
+                text: "⚠️ Failed to get AI response. Please make sure the local server is running on port 5000 and try again.",
+                timestamp: new Date().toISOString(),
+              },
+            ],
+          }
+        : thread
+    )
+  );
+} finally {
+  finishAiRequest();
 }
   };
 
@@ -554,9 +595,9 @@ TASK
 `;
 }
 const sendMessage = async (text: string) => {
-  if (!selectedThreadId) return;
+  if (!selectedThreadId || isTyping) return;
 
-  setIsTyping(true);
+  startAiRequest();
 
   // Add user message
   setThreads((prevThreads) =>
@@ -666,7 +707,7 @@ try {
     })
   );
 } finally {
-  setIsTyping(false);
+  finishAiRequest();
 }
 };
 
@@ -677,7 +718,7 @@ const explainCurrentThread = async () => {
   const currentThread = threads.find((t) => t.id === targetThreadId);
   if (!currentThread) return;
 
-  setIsTyping(true);
+  startAiRequest();
 
   const contextText = currentThread.context ? `Context:\n${currentThread.context}\n\n` : "";
   const historyText =
@@ -750,7 +791,7 @@ Use clean Markdown formatting.
       })
     );
   } finally {
-    setIsTyping(false);
+    finishAiRequest();
   }
 };
 
