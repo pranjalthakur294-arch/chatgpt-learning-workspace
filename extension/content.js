@@ -347,13 +347,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const chatTitle = document.title;
   const conversation = extractConversation();
 
+  const payload = {
+    selectedText: message.text,
+    sourceUrl: window.location.href,
+    chatTitle,
+    conversation,
+  };
+
+  if (message.captureId) {
+    payload.captureId = message.captureId;
+  }
+
   chrome.storage.local.set(
-    {
-      selectedText: message.text,
-      sourceUrl: window.location.href,
-      chatTitle,
-      conversation,
-    },
+    payload,
     () => {
       console.log("Storage saved");
     }

@@ -238,6 +238,23 @@ function loadInitialThreads(): InitialStateResult {
   }
 }
 
+let lastAssignedThreadId = 0;
+
+function generateUniqueThreadId(existingThreads: Thread[] = []): number {
+  const now = Date.now();
+  let candidate = now > lastAssignedThreadId ? now : lastAssignedThreadId + 1;
+
+  if (existingThreads.length > 0) {
+    const existingIds = new Set(existingThreads.map((t) => t.id));
+    while (existingIds.has(candidate)) {
+      candidate += 1;
+    }
+  }
+
+  lastAssignedThreadId = candidate;
+  return candidate;
+}
+
 function App() {
   console.log("APP STARTED");
 
@@ -279,6 +296,7 @@ const [searchTerm, setSearchTerm] =
 const [isTyping, setIsTyping] =
   useState(false);
 const activeRequestsRef = useRef(0);
+const processedCaptureIdsRef = useRef<Set<string>>(new Set());
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
 const startAiRequest = () => {
@@ -305,9 +323,21 @@ const finishAiRequest = () => {
   }, []);
 
   useEffect(() => {
-    const listener = async (changes: any) => {
+    const listener = async (changes: any, areaName?: string) => {
+
+    if (areaName && areaName !== "local") return;
 
     if (!changes.selectedText?.newValue) return;
+
+    const rawCaptureId = changes.captureId?.newValue;
+    const captureId =
+      typeof rawCaptureId === "string" && rawCaptureId.trim().length > 0
+        ? rawCaptureId.trim()
+        : null;
+
+    if (captureId && processedCaptureIdsRef.current.has(captureId)) {
+      return;
+    }
 
     const text = changes.selectedText.newValue;
 
@@ -320,11 +350,16 @@ const finishAiRequest = () => {
     const conversation =
       changes.conversation?.newValue || [];
 
+    if (captureId) {
+      processedCaptureIdsRef.current.add(captureId);
+    }
+
     chrome.storage.local.remove([
       "selectedText",
       "sourceUrl",
       "chatTitle",
       "conversation",
+      "captureId",
     ]);
 
     console.log("Storage received");
@@ -333,7 +368,7 @@ const finishAiRequest = () => {
       new Date().toISOString();
 
     const threadId =
-      Date.now();
+      generateUniqueThreadId(threads);
 
     const contextData = `
 Conversation Title:
@@ -487,7 +522,7 @@ const createThread = (
   const now = new Date().toISOString();
 
   const newThread: Thread = {
-  id: Date.now(),
+  id: generateUniqueThreadId(threads),
   title,
   context,
   createdAt: now,

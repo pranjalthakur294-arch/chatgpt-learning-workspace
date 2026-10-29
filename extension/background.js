@@ -23,11 +23,14 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   console.log("Selected Text:", info.selectionText);
   console.log("Tab ID:", tab.id);
 
+  const captureId = `capture_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+
   chrome.tabs.sendMessage(
     tab.id,
     {
       action: "CREATE_THREAD",
       text: info.selectionText,
+      captureId,
     },
     (response) => {
       if (chrome.runtime.lastError) {
