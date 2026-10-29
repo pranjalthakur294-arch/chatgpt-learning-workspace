@@ -322,57 +322,135 @@ const finishAiRequest = () => {
     return () => window.removeEventListener("message", handleParentMessage);
   }, []);
 
-  useEffect(() => {
-    const listener = async (changes: any, areaName?: string) => {
+  const cleanupLegacyCapture = (consumedPayload: {
+    captureId?: string | null;
+    selectedText?: string;
+    sourceUrl?: string;
+    chatTitle?: string;
+  }) => {
+    try {
+      if (typeof chrome === "undefined" || !chrome.storage?.local?.get) return;
 
-    if (areaName && areaName !== "local") return;
+      chrome.storage.local.get(
+        ["captureId", "selectedText", "sourceUrl", "chatTitle"],
+        (current: any) => {
+          if (chrome.runtime?.lastError || !current) return;
 
-    if (!changes.selectedText?.newValue) return;
+          let shouldRemove = false;
 
-    const rawCaptureId = changes.captureId?.newValue;
+          if (consumedPayload.captureId) {
+            if (current.captureId === consumedPayload.captureId) {
+              shouldRemove = true;
+            }
+          } else {
+            if (
+              !current.captureId &&
+              current.selectedText === consumedPayload.selectedText &&
+              current.sourceUrl === consumedPayload.sourceUrl &&
+              current.chatTitle === consumedPayload.chatTitle
+            ) {
+              shouldRemove = true;
+            }
+          }
+
+          if (shouldRemove && chrome.storage.local.remove) {
+            chrome.storage.local.remove([
+              "selectedText",
+              "sourceUrl",
+              "chatTitle",
+              "conversation",
+              "captureId",
+            ]);
+          }
+        }
+      );
+    } catch (err) {
+      console.error("Failed to clean up legacy capture from storage:", err);
+    }
+  };
+
+  const cleanupCaptureKey = (storageKey?: string | null, payload?: any) => {
+    try {
+      if (typeof chrome === "undefined") return;
+
+      if (storageKey) {
+        if (chrome.storage?.local?.remove) {
+          chrome.storage.local.remove([storageKey], () => {
+            if (chrome.runtime?.lastError) {
+              console.error(
+                "Failed to remove capture key:",
+                storageKey,
+                chrome.runtime.lastError
+              );
+            }
+          });
+        }
+      } else if (payload) {
+        cleanupLegacyCapture(payload);
+      }
+    } catch (err) {
+      console.error("Failed to clean up capture key:", err);
+    }
+  };
+
+  const processDoubtCapture = async (
+    payload: {
+      selectedText?: string;
+      sourceUrl?: string;
+      chatTitle?: string;
+      conversation?: any[];
+      captureId?: string | null;
+      createdAt?: string;
+    },
+    storageKey?: string | null
+  ) => {
+    if (
+      typeof payload.selectedText !== "string" ||
+      payload.selectedText.trim().length === 0
+    ) {
+      if (storageKey && typeof chrome !== "undefined" && chrome.storage?.local?.remove) {
+        chrome.storage.local.remove([storageKey]);
+      }
+      return;
+    }
+
+    const rawCaptureId = payload.captureId;
     const captureId =
       typeof rawCaptureId === "string" && rawCaptureId.trim().length > 0
         ? rawCaptureId.trim()
         : null;
 
     if (captureId && processedCaptureIdsRef.current.has(captureId)) {
+      if (storageKey && typeof chrome !== "undefined" && chrome.storage?.local?.remove) {
+        chrome.storage.local.remove([storageKey]);
+      }
       return;
     }
-
-    const text = changes.selectedText.newValue;
-
-    const sourceUrl =
-      changes.sourceUrl?.newValue;
-
-    const chatTitle =
-      changes.chatTitle?.newValue;
-
-    const conversation =
-      changes.conversation?.newValue || [];
 
     if (captureId) {
       processedCaptureIdsRef.current.add(captureId);
     }
 
-    chrome.storage.local.remove([
-      "selectedText",
-      "sourceUrl",
-      "chatTitle",
-      "conversation",
-      "captureId",
-    ]);
+    cleanupCaptureKey(storageKey, {
+      captureId,
+      selectedText: payload.selectedText,
+      sourceUrl: payload.sourceUrl,
+      chatTitle: payload.chatTitle,
+    });
 
     console.log("Storage received");
 
-    const now =
-      new Date().toISOString();
+    const text = payload.selectedText;
+    const sourceUrl = payload.sourceUrl;
+    const chatTitle = payload.chatTitle;
+    const conversation = payload.conversation || [];
 
-    const threadId =
-      generateUniqueThreadId(threads);
+    const now = new Date().toISOString();
+    const threadId = generateUniqueThreadId(threads);
 
     const contextData = `
 Conversation Title:
-${chatTitle}
+${chatTitle || ""}
 
 Recent Conversation:
 ${JSON.stringify(conversation, null, 2)}
@@ -381,7 +459,7 @@ Selected Text:
 ${text}
 
 Source:
-${sourceUrl}
+${sourceUrl || ""}
 `;
 
     const newThread: Thread = {
@@ -400,92 +478,173 @@ ${sourceUrl}
       ],
     };
 
-    setThreads((prev) => [
-      newThread,
-      ...prev,
-    ]);
-
+    setThreads((prev) => [newThread, ...prev]);
     setSelectedThreadId(threadId);
-
     setSidebarOpen(true);
 
-const prompt = buildLearningPrompt(
-  newThread.title,
-  newThread.messages,
-  conversation,
-  text,
-  sourceUrl
-);
-
-startAiRequest();
-
-try {
-  console.log("BEFORE sendToAI");
-
-  const aiReply = await sendToAI(prompt);
-
-  console.log("AFTER sendToAI", aiReply);
-
-  if (!aiReply) {
-    throw new Error("Empty reply from AI service");
-  }
-
-  setThreads((prev) =>
-    prev.map((thread) =>
-      thread.id === threadId
-        ? {
-            ...thread,
-            updatedAt: new Date().toISOString(),
-            messages: [
-              ...thread.messages,
-              {
-                sender: "AI",
-                text: aiReply,
-                timestamp: new Date().toISOString(),
-              },
-            ],
-          }
-        : thread
-    )
-  );
-
-  console.log("AFTER setThreads");
-} catch (err) {
-  console.error("sendToAI ERROR:", err);
-
-  setThreads((prev) =>
-    prev.map((thread) =>
-      thread.id === threadId
-        ? {
-            ...thread,
-            updatedAt: new Date().toISOString(),
-            messages: [
-              ...thread.messages,
-              {
-                sender: "AI",
-                text: "⚠️ Failed to get AI response. Please make sure the local server is running on port 5000 and try again.",
-                timestamp: new Date().toISOString(),
-              },
-            ],
-          }
-        : thread
-    )
-  );
-} finally {
-  finishAiRequest();
-}
-  };
-
-  chrome.storage.onChanged.addListener(
-    listener
-  );
-
-  return () =>
-    chrome.storage.onChanged.removeListener(
-      listener
+    const prompt = buildLearningPrompt(
+      newThread.title,
+      newThread.messages,
+      conversation,
+      text,
+      sourceUrl || ""
     );
 
-}, []);
+    startAiRequest();
+
+    try {
+      console.log("BEFORE sendToAI");
+
+      const aiReply = await sendToAI(prompt);
+
+      console.log("AFTER sendToAI", aiReply);
+
+      if (!aiReply) {
+        throw new Error("Empty reply from AI service");
+      }
+
+      setThreads((prev) =>
+        prev.map((thread) =>
+          thread.id === threadId
+            ? {
+                ...thread,
+                updatedAt: new Date().toISOString(),
+                messages: [
+                  ...thread.messages,
+                  {
+                    sender: "AI",
+                    text: aiReply,
+                    timestamp: new Date().toISOString(),
+                  },
+                ],
+              }
+            : thread
+        )
+      );
+
+      console.log("AFTER setThreads");
+    } catch (err) {
+      console.error("sendToAI ERROR:", err);
+
+      setThreads((prev) =>
+        prev.map((thread) =>
+          thread.id === threadId
+            ? {
+                ...thread,
+                updatedAt: new Date().toISOString(),
+                messages: [
+                  ...thread.messages,
+                  {
+                    sender: "AI",
+                    text: "⚠️ Failed to get AI response. Please make sure the local server is running on port 5000 and try again.",
+                    timestamp: new Date().toISOString(),
+                  },
+                ],
+              }
+            : thread
+        )
+      );
+    } finally {
+      finishAiRequest();
+    }
+  };
+
+  useEffect(() => {
+    if (typeof chrome === "undefined" || !chrome.storage?.onChanged) {
+      return;
+    }
+
+    const CAPTURE_KEY_PREFIX = "doubt_capture_";
+
+    const listener = (changes: any, areaName?: string) => {
+      if (areaName && areaName !== "local") return;
+
+      let handledCaptureKey = false;
+
+      for (const key of Object.keys(changes)) {
+        if (key.startsWith(CAPTURE_KEY_PREFIX)) {
+          const change = changes[key];
+          if (change && change.newValue) {
+            handledCaptureKey = true;
+            processDoubtCapture(change.newValue, key);
+          }
+        }
+      }
+
+      if (
+        !handledCaptureKey &&
+        changes.selectedText?.newValue
+      ) {
+        processDoubtCapture(
+          {
+            selectedText: changes.selectedText.newValue,
+            sourceUrl: changes.sourceUrl?.newValue,
+            chatTitle: changes.chatTitle?.newValue,
+            conversation: changes.conversation?.newValue || [],
+            captureId: changes.captureId?.newValue,
+          },
+          null
+        );
+      }
+    };
+
+    chrome.storage.onChanged.addListener(listener);
+
+    if (chrome.storage.local?.get) {
+      try {
+        chrome.storage.local.get(null, (items: any) => {
+          if (chrome.runtime?.lastError) {
+            console.error("Cold-start storage get error:", chrome.runtime.lastError);
+            return;
+          }
+
+          if (!items) return;
+
+          const captureKeys = Object.keys(items).filter((key) =>
+            key.startsWith(CAPTURE_KEY_PREFIX)
+          );
+
+          captureKeys.sort((a, b) => {
+            const payloadA = items[a];
+            const payloadB = items[b];
+            const timeA = payloadA?.createdAt
+              ? new Date(payloadA.createdAt).getTime()
+              : 0;
+            const timeB = payloadB?.createdAt
+              ? new Date(payloadB.createdAt).getTime()
+              : 0;
+            return timeA - timeB;
+          });
+
+          for (const key of captureKeys) {
+            const payload = items[key];
+            if (payload && typeof payload === "object") {
+              processDoubtCapture(payload, key);
+            }
+          }
+
+          if (items.selectedText && captureKeys.length === 0) {
+            processDoubtCapture(
+              {
+                selectedText: items.selectedText,
+                sourceUrl: items.sourceUrl,
+                chatTitle: items.chatTitle,
+                conversation: items.conversation || [],
+                captureId: items.captureId,
+              },
+              null
+            );
+          }
+        });
+      } catch (err) {
+        console.error("Cold-start recovery error:", err);
+      }
+    }
+
+    return () => {
+      chrome.storage.onChanged.removeListener(listener);
+    };
+  }, []);
 
 useEffect(() => {
   if (

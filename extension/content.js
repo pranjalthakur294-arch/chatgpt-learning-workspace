@@ -347,21 +347,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const chatTitle = document.title;
   const conversation = extractConversation();
 
+  const captureId =
+    message.captureId ||
+    `capture_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+
   const payload = {
+    captureId,
     selectedText: message.text,
     sourceUrl: window.location.href,
     chatTitle,
     conversation,
+    createdAt: new Date().toISOString(),
   };
 
-  if (message.captureId) {
-    payload.captureId = message.captureId;
-  }
+  const storageKey = `doubt_capture_${captureId}`;
 
   chrome.storage.local.set(
-    payload,
+    { [storageKey]: payload },
     () => {
-      console.log("Storage saved");
+      console.log("Storage saved for", storageKey);
     }
   );
 
