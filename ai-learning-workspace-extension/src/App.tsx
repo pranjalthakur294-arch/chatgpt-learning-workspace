@@ -1,6 +1,6 @@
 console.log("chrome =", chrome);
 console.log("chrome.storage =", chrome.storage);
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import "./App.css";
 import CreateThreadModal from "./components/CreateThreadModal";
 import { generateTitle } from "./api/generateTitle";
@@ -9,54 +9,260 @@ import ThreadView from "./components/ThreadView";
 import ChatInput from "./components/ChatInput";
 import RenameThreadModal from "./components/RenameThreadModal";
 import { buildContext } from "./ai/buildContext";
-import type { Thread } from "./types/thread";
+import type { Thread, Message, MessageType, QuizData, PracticeData } from "./types/thread";
 import { sendToAI } from "./api/chat";
 import { exportThread } from "./utils/exportThread";
 
 declare const chrome: any;
-function App() {
-  console.log("APP STARTED");
-  
-  console.log("APP COMPONENT RENDERED");
-  const [threads, setThreads] = useState<Thread[]>(() => {
-  const savedThreads =
-    localStorage.getItem("threads");
 
-  if (savedThreads) {
-    return JSON.parse(savedThreads);
+function normalizeMessage(raw: unknown): Message | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return null;
+  }
+  const m = raw as Record<string, unknown>;
+  if (typeof m.sender !== "string" || typeof m.text !== "string") {
+    return null;
   }
 
- return [
+  const isValidTimestamp =
+    typeof m.timestamp === "string" && !isNaN(Date.parse(m.timestamp));
+
+  const validTypes: MessageType[] = ["chat", "explanation", "quiz", "practice"];
+  const msgType =
+    typeof m.type === "string" && validTypes.includes(m.type as MessageType)
+      ? (m.type as MessageType)
+      : undefined;
+
+  const message: Message = {
+    sender: m.sender,
+    text: m.text,
+    timestamp: isValidTimestamp ? (m.timestamp as string) : new Date().toISOString(),
+  };
+
+  if (msgType) {
+    message.type = msgType;
+  }
+  if (m.quiz && typeof m.quiz === "object" && !Array.isArray(m.quiz)) {
+    message.quiz = m.quiz as QuizData;
+  }
+  if (m.practice && typeof m.practice === "object" && !Array.isArray(m.practice)) {
+    message.practice = m.practice as PracticeData;
+  }
+
+  return message;
+}
+
+function normalizeThreadCandidate(raw: unknown): Thread | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return null;
+  }
+  const t = raw as Record<string, unknown>;
+  if (
+    typeof t.id !== "number" ||
+    !Number.isFinite(t.id) ||
+    typeof t.title !== "string" ||
+    !Array.isArray(t.messages)
+  ) {
+    return null;
+  }
+
+  const validMessages = t.messages
+    .map(normalizeMessage)
+    .filter((m): m is Message => m !== null);
+
+  const context =
+    typeof t.context === "string"
+      ? t.context
+      : t.context != null
+      ? String(t.context)
+      : "";
+
+  const isValidCreatedAt =
+    typeof t.createdAt === "string" && !isNaN(Date.parse(t.createdAt));
+  const isValidUpdatedAt =
+    typeof t.updatedAt === "string" && !isNaN(Date.parse(t.updatedAt));
+
+  const now = new Date().toISOString();
+  const createdAt = isValidCreatedAt
+    ? (t.createdAt as string)
+    : isValidUpdatedAt
+    ? (t.updatedAt as string)
+    : now;
+  const updatedAt = isValidUpdatedAt
+    ? (t.updatedAt as string)
+    : isValidCreatedAt
+    ? (t.createdAt as string)
+    : now;
+
+  const thread: Thread = {
+    id: t.id,
+    title: t.title,
+    context,
+    createdAt,
+    updatedAt,
+    messages: validMessages,
+  };
+
+  if (typeof t.sourceUrl === "string") {
+    thread.sourceUrl = t.sourceUrl;
+  }
+
+  return thread;
+}
+
+function resolveDuplicateThreadIds(threads: Thread[]): {
+  threads: Thread[];
+  hadDuplicates: boolean;
+} {
+  let maxId = 0;
+  for (const thread of threads) {
+    if (thread.id > maxId) {
+      maxId = thread.id;
+    }
+  }
+
+  const seenIds = new Set<number>();
+  let hadDuplicates = false;
+
+  const deduplicated = threads.map((thread) => {
+    if (!seenIds.has(thread.id)) {
+      seenIds.add(thread.id);
+      return thread;
+    }
+
+    hadDuplicates = true;
+    maxId += 1;
+    seenIds.add(maxId);
+    return {
+      ...thread,
+      id: maxId,
+    };
+  });
+
+  return { threads: deduplicated, hadDuplicates };
+}
+
+const getDefaultThreads = (): Thread[] => [
   {
-  id: 1,
-  title: "Context Switch",
-  context: "Operating Systems",
-  createdAt: new Date().toISOString(),
+    id: 1,
+    title: "Context Switch",
+    context: "Operating Systems",
+    createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-   messages: [
+    messages: [
+      {
+        sender: "User",
+        text: "What is context switching?",
+        timestamp: new Date().toISOString(),
+      },
+    ],
+  },
   {
-    sender: "User",
-    text: "What is context switching?",
-    timestamp: new Date().toISOString(),
-  },
-],
-  },
- {
-  id: 2,
-  title: "Kernel Thread",
-  context: "Operating Systems",
-  createdAt: new Date().toISOString(),
+    id: 2,
+    title: "Kernel Thread",
+    context: "Operating Systems",
+    createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     messages: [],
   },
 ];
-});
-useEffect(() => {
-  localStorage.setItem(
-    "threads",
-    JSON.stringify(threads)
-  );
-}, [threads]);  
+
+interface InitialStateResult {
+  threads: Thread[];
+  shouldSkipInitialPersist: boolean;
+}
+
+function loadInitialThreads(): InitialStateResult {
+  try {
+    const savedThreads = localStorage.getItem("threads");
+
+    if (savedThreads === null) {
+      // Key is missing: retain existing default thread behavior
+      return {
+        threads: getDefaultThreads(),
+        shouldSkipInitialPersist: false,
+      };
+    }
+
+    const parsed: unknown = JSON.parse(savedThreads);
+
+    if (!Array.isArray(parsed)) {
+      // Parsed JSON is not an array (e.g. object, number, boolean)
+      return {
+        threads: getDefaultThreads(),
+        shouldSkipInitialPersist: true,
+      };
+    }
+
+    if (parsed.length === 0) {
+      // Preserve intentionally empty thread list
+      return {
+        threads: [],
+        shouldSkipInitialPersist: false,
+      };
+    }
+
+    const validThreads: Thread[] = [];
+    let hasInvalidEntries = false;
+
+    for (const item of parsed) {
+      const normalized = normalizeThreadCandidate(item);
+      if (normalized) {
+        validThreads.push(normalized);
+      } else {
+        hasInvalidEntries = true;
+      }
+    }
+
+    if (validThreads.length === 0) {
+      // All entries in the array were invalid
+      return {
+        threads: getDefaultThreads(),
+        shouldSkipInitialPersist: true,
+      };
+    }
+
+    const { threads: resolvedThreads, hadDuplicates } =
+      resolveDuplicateThreadIds(validThreads);
+
+    return {
+      threads: resolvedThreads,
+      shouldSkipInitialPersist: hasInvalidEntries || hadDuplicates,
+    };
+  } catch {
+    // Malformed JSON or localStorage access failure
+    return {
+      threads: getDefaultThreads(),
+      shouldSkipInitialPersist: true,
+    };
+  }
+}
+
+function App() {
+  console.log("APP STARTED");
+
+  console.log("APP COMPONENT RENDERED");
+  const [initialState] = useState(() => loadInitialThreads());
+  const [threads, setThreads] = useState<Thread[]>(initialState.threads);
+  const shouldSkipPersistRef = useRef(initialState.shouldSkipInitialPersist);
+
+  useEffect(() => {
+    if (shouldSkipPersistRef.current) {
+      if (threads === initialState.threads) {
+        return;
+      }
+      shouldSkipPersistRef.current = false;
+    }
+
+    try {
+      localStorage.setItem(
+        "threads",
+        JSON.stringify(threads)
+      );
+    } catch (err) {
+      console.error("Failed to save threads to localStorage:", err);
+    }
+  }, [threads, initialState.threads]);
 
 
   const [selectedThreadId, setSelectedThreadId] =
